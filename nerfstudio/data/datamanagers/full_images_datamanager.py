@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Data manager that outputs cameras / images instead of raybundles
 
@@ -51,7 +50,8 @@ from nerfstudio.utils.rich_utils import CONSOLE
 @dataclass
 class FullImageDatamanagerConfig(DataManagerConfig):
     _target: Type = field(default_factory=lambda: FullImageDatamanager)
-    dataparser: AnnotatedDataParserUnion = field(default_factory=NerfstudioDataParserConfig)
+    dataparser: AnnotatedDataParserUnion = field(
+        default_factory=NerfstudioDataParserConfig)
     camera_res_scale_factor: float = 1.0
     """The scale factor for scaling spatial data such as images, mask, semantics
     along with relevant information about camera intrinsics
@@ -61,7 +61,7 @@ class FullImageDatamanagerConfig(DataManagerConfig):
     eval_num_times_to_repeat_images: int = -1
     """When not evaluating on all images, number of iterations before picking
     new images. If -1, never pick new images."""
-    eval_image_indices: Optional[Tuple[int, ...]] = (0,)
+    eval_image_indices: Optional[Tuple[int, ...]] = (0, )
     """Specifies the image indices to use during eval; if None, uses all."""
     cache_images: Literal["cpu", "gpu"] = "gpu"
     """Whether to cache images in memory. If "cpu", caches on cpu. If "gpu", caches on device."""
@@ -101,13 +101,15 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         local_rank: int = 0,
         **kwargs,
     ):
+
         self.config = config
         self.device = device
         self.world_size = world_size
         self.local_rank = local_rank
         self.sampler = None
         self.test_mode = test_mode
-        self.test_split = "test" if test_mode in ["test", "inference"] else "val"
+        self.test_split = "test" if test_mode in ["test", "inference"
+                                                  ] else "val"
         self.dataparser_config = self.config.dataparser
         if self.config.data is not None:
             self.config.dataparser.data = Path(self.config.data)
@@ -118,7 +120,8 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
             self.dataparser.downscale_factor = 1  # Avoid opening images
         self.includes_time = self.dataparser.includes_time
 
-        self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split="train")
+        self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(
+            split="train")
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
         if len(self.train_dataset) > 500 and self.config.cache_images == "gpu":
@@ -146,21 +149,25 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         num_train_cameras = len(self.train_dataset)
         if self.config.train_cameras_sampling_strategy == "random":
             if not hasattr(self, "random_generator"):
-                self.random_generator = random.Random(self.config.train_cameras_sampling_seed)
+                self.random_generator = random.Random(
+                    self.config.train_cameras_sampling_seed)
             indices = list(range(num_train_cameras))
             self.random_generator.shuffle(indices)
             return indices
         elif self.config.train_cameras_sampling_strategy == "fps":
             if not hasattr(self, "train_unsampled_epoch_count"):
-                np.random.seed(self.config.train_cameras_sampling_seed)  # fix random seed of fpsample
+                np.random.seed(self.config.train_cameras_sampling_seed
+                               )  # fix random seed of fpsample
                 self.train_unsampled_epoch_count = np.zeros(num_train_cameras)
-            camera_origins = self.train_dataset.cameras.camera_to_worlds[..., 3].numpy()
+            camera_origins = self.train_dataset.cameras.camera_to_worlds[
+                ..., 3].numpy()
             # We concatenate camera origins with weighted train_unsampled_epoch_count because we want to
             # increase the chance to sample camera that hasn't been sampled in consecutive epochs previously.
             # We assume the camera origins are also rescaled, so the weight 0.1 is relative to the scale of scene
             data = np.concatenate(
-                (camera_origins, 0.1 * np.expand_dims(self.train_unsampled_epoch_count, axis=-1)), axis=-1
-            )
+                (camera_origins, 0.1 *
+                 np.expand_dims(self.train_unsampled_epoch_count, axis=-1)),
+                axis=-1)
             n = self.config.fps_reset_every
             if num_train_cameras < n:
                 CONSOLE.log(
@@ -168,28 +175,36 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
                     "camera sampler will be very similar to sampling random without replacement (default setting)."
                 )
                 n = num_train_cameras
-            kdline_fps_samples_idx = fpsample.bucket_fps_kdline_sampling(data, n, h=3)
+            kdline_fps_samples_idx = fpsample.bucket_fps_kdline_sampling(data,
+                                                                         n,
+                                                                         h=3)
 
             self.train_unsampled_epoch_count += 1
             self.train_unsampled_epoch_count[kdline_fps_samples_idx] = 0
             return kdline_fps_samples_idx.tolist()
         else:
-            raise ValueError(f"Unknown train camera sampling strategy: {self.config.train_cameras_sampling_strategy}")
+            raise ValueError(
+                f"Unknown train camera sampling strategy: {self.config.train_cameras_sampling_strategy}"
+            )
 
     @cached_property
     def cached_train(self) -> List[Dict[str, torch.Tensor]]:
         """Get the training images. Will load and undistort the images the
         first time this (cached) property is accessed."""
-        return self._load_images("train", cache_images_device=self.config.cache_images)
+        return self._load_images("train",
+                                 cache_images_device=self.config.cache_images)
 
     @cached_property
     def cached_eval(self) -> List[Dict[str, torch.Tensor]]:
         """Get the eval images. Will load and undistort the images the
         first time this (cached) property is accessed."""
-        return self._load_images("eval", cache_images_device=self.config.cache_images)
+        return self._load_images("eval",
+                                 cache_images_device=self.config.cache_images)
 
     def _load_images(
-        self, split: Literal["train", "eval"], cache_images_device: Literal["cpu", "gpu"]
+        self, split: Literal["train",
+                             "eval"], cache_images_device: Literal["cpu",
+                                                                   "gpu"]
     ) -> List[Dict[str, torch.Tensor]]:
         undistorted_images: List[Dict[str, torch.Tensor]] = []
 
@@ -202,19 +217,23 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
             assert_never(split)
 
         def undistort_idx(idx: int) -> Dict[str, torch.Tensor]:
-            data = dataset.get_data(idx, image_type=self.config.cache_images_type)
+            data = dataset.get_data(idx,
+                                    image_type=self.config.cache_images_type)
             camera = dataset.cameras[idx].reshape(())
-            assert data["image"].shape[1] == camera.width.item() and data["image"].shape[0] == camera.height.item(), (
+            assert data["image"].shape[1] == camera.width.item(
+            ) and data["image"].shape[0] == camera.height.item(), (
                 f'The size of image ({data["image"].shape[1]}, {data["image"].shape[0]}) loaded '
                 f'does not match the camera parameters ({camera.width.item(), camera.height.item()})'
             )
-            if camera.distortion_params is None or torch.all(camera.distortion_params == 0):
+            if camera.distortion_params is None or torch.all(
+                    camera.distortion_params == 0):
                 return data
             K = camera.get_intrinsics_matrices().numpy()
             distortion_params = camera.distortion_params.numpy()
             image = data["image"].numpy()
 
-            K, image, mask = _undistort_image(camera, distortion_params, data, image, K)
+            K, image, mask = _undistort_image(camera, distortion_params, data,
+                                              image, K)
             data["image"] = torch.from_numpy(image)
             if mask is not None:
                 data["mask"] = mask
@@ -238,8 +257,7 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
                     description=f"Caching / undistorting {split} images",
                     transient=True,
                     total=len(dataset),
-                )
-            )
+                ))
 
         # Move to device.
         if cache_images_device == "gpu":
@@ -271,18 +289,22 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
     def create_eval_dataset(self) -> TDataset:
         """Sets up the data loaders for evaluation"""
         return self.dataset_type(
-            dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
+            dataparser_outputs=self.dataparser.get_dataparser_outputs(
+                split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
         )
 
     @cached_property
     def dataset_type(self) -> Type[TDataset]:
         """Returns the dataset type passed as the generic argument"""
-        default: Type[TDataset] = cast(TDataset, TDataset.__default__)  # type: ignore
-        orig_class: Type[FullImageDatamanager] = get_orig_class(self, default=None)  # type: ignore
+        default: Type[TDataset] = cast(TDataset,
+                                       TDataset.__default__)  # type: ignore
+        orig_class: Type[FullImageDatamanager] = get_orig_class(
+            self, default=None)  # type: ignore
         if type(self) is FullImageDatamanager and orig_class is None:
             return default
-        if orig_class is not None and get_origin(orig_class) is FullImageDatamanager:
+        if orig_class is not None and get_origin(
+                orig_class) is FullImageDatamanager:
             return get_args(orig_class)[0]
 
         # For inherited classes, we need to find the correct type to instantiate
@@ -294,7 +316,8 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
                             value = value.__forward_value__
                         elif value.__forward_module__ is None:
                             value.__forward_module__ = type(self).__module__
-                            value = getattr(value, "_evaluate")(None, None, set())
+                            value = getattr(value, "_evaluate")(None, None,
+                                                                set())
                     assert isinstance(value, type)
                     if issubclass(value, InputDataset):
                         return cast(Type[TDataset], value)
@@ -320,8 +343,9 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         cameras = []
         for i in image_indices:
             data[i]["image"] = data[i]["image"].to(self.device)
-            cameras.append(_cameras[i : i + 1])
-        assert len(self.eval_dataset.cameras.shape) == 1, "Assumes single batch dimension"
+            cameras.append(_cameras[i:i + 1])
+        assert len(self.eval_dataset.cameras.shape
+                   ) == 1, "Assumes single batch dimension"
         return list(zip(cameras, data))
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
@@ -347,8 +371,9 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         data = self.cached_train[image_idx]
         data["image"] = data["image"].to(self.device)
 
-        assert len(self.train_cameras.shape) == 1, "Assumes single batch dimension"
-        camera = self.train_cameras[image_idx : image_idx + 1].to(self.device)
+        assert len(
+            self.train_cameras.shape) == 1, "Assumes single batch dimension"
+        camera = self.train_cameras[image_idx:image_idx + 1].to(self.device)
         if camera.metadata is None:
             camera.metadata = {}
         camera.metadata["cam_idx"] = image_idx
@@ -366,59 +391,66 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         Returns a Camera instead of raybundle
 
         TODO: Make sure this logic is consistent with the vanilladatamanager"""
-        image_idx = self.eval_unseen_cameras.pop(random.randint(0, len(self.eval_unseen_cameras) - 1))
+        image_idx = self.eval_unseen_cameras.pop(
+            random.randint(0,
+                           len(self.eval_unseen_cameras) - 1))
         # Make sure to re-populate the unseen cameras list if we have exhausted it
         if len(self.eval_unseen_cameras) == 0:
-            self.eval_unseen_cameras = [i for i in range(len(self.eval_dataset))]
+            self.eval_unseen_cameras = [
+                i for i in range(len(self.eval_dataset))
+            ]
         data = deepcopy(self.cached_eval[image_idx])
         data["image"] = data["image"].to(self.device)
-        assert len(self.eval_dataset.cameras.shape) == 1, "Assumes single batch dimension"
-        camera = self.eval_dataset.cameras[image_idx : image_idx + 1].to(self.device)
+        assert len(self.eval_dataset.cameras.shape
+                   ) == 1, "Assumes single batch dimension"
+        camera = self.eval_dataset.cameras[image_idx:image_idx + 1].to(
+            self.device)
         return camera, data
 
 
 def _undistort_image(
-    camera: Cameras, distortion_params: np.ndarray, data: dict, image: np.ndarray, K: np.ndarray
+        camera: Cameras, distortion_params: np.ndarray, data: dict,
+        image: np.ndarray, K: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, Optional[torch.Tensor]]:
     mask = None
     if camera.camera_type.item() == CameraType.PERSPECTIVE.value:
         assert distortion_params[3] == 0, (
             "We doesn't support the 4th Brown parameter for image undistortion, "
-            "Only k1, k2, k3, p1, p2 can be non-zero."
-        )
-        distortion_params = np.array(
-            [
-                distortion_params[0],
-                distortion_params[1],
-                distortion_params[4],
-                distortion_params[5],
-                distortion_params[2],
-                distortion_params[3],
-                0,
-                0,
-            ]
-        )
+            "Only k1, k2, k3, p1, p2 can be non-zero.")
+        distortion_params = np.array([
+            distortion_params[0],
+            distortion_params[1],
+            distortion_params[4],
+            distortion_params[5],
+            distortion_params[2],
+            distortion_params[3],
+            0,
+            0,
+        ])
         # because OpenCV expects the pixel coord to be top-left, we need to shift the principal point by 0.5
         # see https://github.com/nerfstudio-project/nerfstudio/issues/3048
         K[0, 2] = K[0, 2] - 0.5
         K[1, 2] = K[1, 2] - 0.5
         if np.any(distortion_params):
-            newK, roi = cv2.getOptimalNewCameraMatrix(K, distortion_params, (image.shape[1], image.shape[0]), 0)
-            image = cv2.undistort(image, K, distortion_params, None, newK)  # type: ignore
+            newK, roi = cv2.getOptimalNewCameraMatrix(
+                K, distortion_params, (image.shape[1], image.shape[0]), 0)
+            image = cv2.undistort(image, K, distortion_params, None,
+                                  newK)  # type: ignore
         else:
             newK = K
             roi = 0, 0, image.shape[1], image.shape[0]
         # crop the image and update the intrinsics accordingly
         x, y, w, h = roi
-        image = image[y : y + h, x : x + w]
+        image = image[y:y + h, x:x + w]
         if "depth_image" in data:
-            data["depth_image"] = data["depth_image"][y : y + h, x : x + w]
+            data["depth_image"] = data["depth_image"][y:y + h, x:x + w]
         if "mask" in data:
             mask = data["mask"].numpy()
             mask = mask.astype(np.uint8) * 255
             if np.any(distortion_params):
-                mask = cv2.undistort(mask, K, distortion_params, None, newK)  # type: ignore
-            mask = mask[y : y + h, x : x + w]
+                mask = cv2.undistort(mask, K, distortion_params, None,
+                                     newK)  # type: ignore
+            mask = mask[y:y + h, x:x + w]
             mask = torch.from_numpy(mask).bool()
             if len(mask.shape) == 2:
                 mask = mask[:, :, None]
@@ -429,21 +461,25 @@ def _undistort_image(
     elif camera.camera_type.item() == CameraType.FISHEYE.value:
         K[0, 2] = K[0, 2] - 0.5
         K[1, 2] = K[1, 2] - 0.5
-        distortion_params = np.array(
-            [distortion_params[0], distortion_params[1], distortion_params[2], distortion_params[3]]
-        )
+        distortion_params = np.array([
+            distortion_params[0], distortion_params[1], distortion_params[2],
+            distortion_params[3]
+        ])
         newK = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-            K, distortion_params, (image.shape[1], image.shape[0]), np.eye(3), balance=0
-        )
+            K,
+            distortion_params, (image.shape[1], image.shape[0]),
+            np.eye(3),
+            balance=0)
         map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            K, distortion_params, np.eye(3), newK, (image.shape[1], image.shape[0]), cv2.CV_32FC1
-        )
+            K, distortion_params, np.eye(3), newK,
+            (image.shape[1], image.shape[0]), cv2.CV_32FC1)
         # and then remap:
         image = cv2.remap(image, map1, map2, interpolation=cv2.INTER_LINEAR)
         if "mask" in data:
             mask = data["mask"].numpy()
             mask = mask.astype(np.uint8) * 255
-            mask = cv2.fisheye.undistortImage(mask, K, distortion_params, None, newK)
+            mask = cv2.fisheye.undistortImage(mask, K, distortion_params, None,
+                                              newK)
             mask = torch.from_numpy(mask).bool()
             if len(mask.shape) == 2:
                 mask = mask[:, :, None]
@@ -451,16 +487,15 @@ def _undistort_image(
         newK[1, 2] = newK[1, 2] + 0.5
         K = newK
     elif camera.camera_type.item() == CameraType.FISHEYE624.value:
-        fisheye624_params = torch.cat(
-            [camera.fx, camera.fy, camera.cx, camera.cy, torch.from_numpy(distortion_params)], dim=0
-        )
-        assert fisheye624_params.shape == (16,)
-        assert (
-            "mask" not in data
-            and camera.metadata is not None
-            and "fisheye_crop_radius" in camera.metadata
-            and isinstance(camera.metadata["fisheye_crop_radius"], float)
-        )
+        fisheye624_params = torch.cat([
+            camera.fx, camera.fy, camera.cx, camera.cy,
+            torch.from_numpy(distortion_params)
+        ],
+                                      dim=0)
+        assert fisheye624_params.shape == (16, )
+        assert ("mask" not in data and camera.metadata is not None
+                and "fisheye_crop_radius" in camera.metadata
+                and isinstance(camera.metadata["fisheye_crop_radius"], float))
         fisheye_crop_radius = camera.metadata["fisheye_crop_radius"]
 
         # Approximate the FOV of the unmasked region of the camera.
@@ -477,8 +512,12 @@ def _undistort_image(
             params=fisheye624_params[None],
         ).squeeze(dim=0)
         fov_radians = torch.max(
-            torch.acos(torch.sum(upper * lower / torch.linalg.norm(upper) / torch.linalg.norm(lower))),
-            torch.acos(torch.sum(left * right / torch.linalg.norm(left) / torch.linalg.norm(right))),
+            torch.acos(
+                torch.sum(upper * lower / torch.linalg.norm(upper) /
+                          torch.linalg.norm(lower))),
+            torch.acos(
+                torch.sum(left * right / torch.linalg.norm(left) /
+                          torch.linalg.norm(right))),
         )
 
         # Heuristics to determine parameters of an undistorted image.
@@ -488,7 +527,10 @@ def _undistort_image(
         undist_K = torch.eye(3)
         undist_K[0, 0] = undistort_focal  # fx
         undist_K[1, 1] = undistort_focal  # fy
-        undist_K[0, 2] = (undist_w - 1) / 2.0  # cx; for a 1x1 image, center should be at (0, 0).
+        undist_K[
+            0,
+            2] = (undist_w -
+                  1) / 2.0  # cx; for a 1x1 image, center should be at (0, 0).
         undist_K[1, 2] = (undist_h - 1) / 2.0  # cy
 
         # Undistorted 2D coordinates -> rays -> reproject to distorted UV coordinates.
@@ -503,20 +545,14 @@ def _undistort_image(
             dim=-1,
         )
         assert undist_uv_homog.shape == (undist_w, undist_h, 3)
-        dist_uv = (
-            fisheye624_project(
-                xyz=(
-                    torch.einsum(
-                        "ij,bj->bi",
-                        torch.linalg.inv(undist_K),
-                        undist_uv_homog.reshape((undist_w * undist_h, 3)),
-                    )[None]
-                ),
-                params=fisheye624_params[None, :],
-            )
-            .reshape((undist_w, undist_h, 2))
-            .numpy()
-        )
+        dist_uv = (fisheye624_project(
+            xyz=(torch.einsum(
+                "ij,bj->bi",
+                torch.linalg.inv(undist_K),
+                undist_uv_homog.reshape((undist_w * undist_h, 3)),
+            )[None]),
+            params=fisheye624_params[None, :],
+        ).reshape((undist_w, undist_h, 2)).numpy())
         map1 = dist_uv[..., 1]
         map2 = dist_uv[..., 0]
 
@@ -538,14 +574,13 @@ def _undistort_image(
                 interpolation=cv2.INTER_LINEAR,
                 borderMode=cv2.BORDER_CONSTANT,
                 borderValue=0,
-            )
-            / 255.0
-        ).bool()[..., None]
+            ) / 255.0).bool()[..., None]
         if len(mask.shape) == 2:
             mask = mask[:, :, None]
         assert mask.shape == (undist_h, undist_w, 1)
         K = undist_K.numpy()
     else:
-        raise NotImplementedError("Only perspective and fisheye cameras are supported")
+        raise NotImplementedError(
+            "Only perspective and fisheye cameras are supported")
 
     return K, image, mask

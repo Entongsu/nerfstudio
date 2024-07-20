@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Base Configs"""
 
 from __future__ import annotations
@@ -92,7 +91,9 @@ class LocalWriterConfig(InstantiateConfig):
     max_log_size: int = 10
     """maximum number of rows to print before wrapping. if 0, will print everything."""
 
-    def setup(self, banner_messages: Optional[List[str]] = None, **kwargs) -> Any:
+    def setup(self,
+              banner_messages: Optional[List[str]] = None,
+              **kwargs) -> Any:
         """Instantiate local writer
 
         Args:
@@ -112,7 +113,8 @@ class LoggingConfig(PrintableConfig):
     max_buffer_size: int = 20
     """maximum history size to keep for computing running averages of stats.
      e.g. if 20, averages will be computed over past 20 occurrences."""
-    local_writer: LocalWriterConfig = field(default_factory=lambda: LocalWriterConfig(enable=True))
+    local_writer: LocalWriterConfig = field(
+        default_factory=lambda: LocalWriterConfig(enable=True))
     """if provided, will print stats locally. if None, will disable printing"""
     profiler: Literal["none", "basic", "pytorch"] = "basic"
     """how to profile the code;
