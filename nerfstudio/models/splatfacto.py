@@ -163,7 +163,7 @@ class SplatfactoModelConfig(ModelConfig):
     """weight of ssim loss"""
     stop_split_at: int = 15000
     """stop splitting at this step"""
-    sh_degree: int = 3
+    sh_degree: int = -1
     """maximum degree of spherical harmonics to use"""
     use_scale_regularization: bool = True
     """If enabled, a scale regularization introduced in PhysGauss (https://xpandora.github.io/PhysGaussian/) is used for reducing huge spikey gaussians."""
@@ -186,6 +186,10 @@ class SplatfactoModelConfig(ModelConfig):
     camera_optimizer: CameraOptimizerConfig = field(
         default_factory=lambda: CameraOptimizerConfig(mode="off"))
     """Config of the camera optimizer to use"""
+    isotropic: bool = True
+    """isotropic gaussian"""
+    const_scale: float = 0.001
+    """isotropic const scale"""
 
 
 class SplatfactoModel(Model):
@@ -220,7 +224,15 @@ class SplatfactoModel(Model):
         distances = torch.from_numpy(distances)
         # find the average of the three nearest neighbors for each point and use that as the scale
         avg_dist = distances.mean(dim=-1, keepdim=True)
-        scales = torch.nn.Parameter(torch.log(avg_dist.repeat(1, 3)))
+        if self.config.isotropic:
+            if self.config.const_scale > 0.0:
+
+                self.scaling_activation = torch.exp
+                scales = torch.nn.Parameter(
+                    (torch.ones_like(avg_dist) * self.config.const_scale))
+        else:
+            scales = torch.nn.Parameter(torch.log(avg_dist.repeat(1, 3)))
+
         num_points = means.shape[0]
         quats = torch.nn.Parameter(random_quat_tensor(num_points))
         dim_sh = num_sh_bases(self.config.sh_degree)
@@ -301,7 +313,13 @@ class SplatfactoModel(Model):
 
     @property
     def scales(self):
-        return self.gauss_params["scales"]
+        if self.config.isotropic:
+            if self.config.const_scale > 0.0:
+
+                return self.config.const_scale * self.gauss_params[
+                    "scales"].repeat(1, 3)
+        else:
+            return self.gauss_params["scales"]
 
     @property
     def quats(self):
@@ -479,12 +497,14 @@ class SplatfactoModel(Model):
                                 self.config.refine_every)
             if do_densification:
                 # then we densify
+
                 assert self.xys_grad_norm is not None and self.vis_counts is not None and self.max_2Dsize is not None
                 avg_grad_norm = (self.xys_grad_norm /
                                  self.vis_counts) * 0.5 * max(
                                      self.last_size[0], self.last_size[1])
                 high_grads = (avg_grad_norm
                               > self.config.densify_grad_thresh).squeeze()
+
                 splits = (self.scales.exp().max(dim=-1).values
                           > self.config.densify_size_thresh).squeeze()
                 if self.step < self.config.stop_screen_size_at:
@@ -492,6 +512,7 @@ class SplatfactoModel(Model):
                                > self.config.split_screen_size).squeeze()
                 splits &= high_grads
                 nsamps = self.config.n_split_samples
+
                 split_params = self.split_gaussians(splits, nsamps)
 
                 dups = (self.scales.exp().max(dim=-1).values
@@ -499,6 +520,7 @@ class SplatfactoModel(Model):
                 dups &= high_grads
                 dup_params = self.dup_gaussians(dups)
                 for name, param in self.gauss_params.items():
+
                     self.gauss_params[name] = torch.nn.Parameter(
                         torch.cat([
                             param.detach(), split_params[name],
@@ -577,8 +599,13 @@ class SplatfactoModel(Model):
             culls = culls | extra_cull_mask
         if self.step > self.config.refine_every * self.config.reset_alpha_every:
             # cull huge ones
-            toobigs = (torch.exp(self.scales).max(dim=-1).values
-                       > self.config.cull_scale_thresh).squeeze()
+            if self.config.isotropic:
+                toobigs = (self.scales.max(dim=-1).values
+                           > self.config.cull_scale_thresh).squeeze()
+
+            else:
+                toobigs = (torch.exp(self.scales).max(dim=-1).values
+                           > self.config.cull_scale_thresh).squeeze()
             if self.step < self.config.stop_screen_size_at:
                 # cull big screen space
                 if self.max_2Dsize is not None:
@@ -594,6 +621,9 @@ class SplatfactoModel(Model):
             f"Culled {n_bef - self.num_points} gaussians "
             f"({below_alpha_count} below alpha thresh, {toobigs_count} too bigs, {self.num_points} remaining)"
         )
+        if self.num_points == 0:
+            import pdb
+            pdb.set_trace()
 
         return culls
 
@@ -602,19 +632,39 @@ class SplatfactoModel(Model):
         This function splits gaussians that are too large
         """
         n_splits = split_mask.sum().item()
+
         CONSOLE.log(
             f"Splitting {split_mask.sum().item()/self.num_points} gaussians: {n_splits}/{self.num_points}"
         )
         centered_samples = torch.randn(
             (samps * n_splits, 3),
             device=self.device)  # Nx3 of axis-aligned scales
-        scaled_samples = (torch.exp(self.scales[split_mask].repeat(samps, 1)) *
-                          centered_samples)  # how these scales are rotated
+
         quats = self.quats[split_mask] / self.quats[split_mask].norm(
             dim=-1, keepdim=True)  # normalize them first
         rots = quat_to_rotmat(quats.repeat(samps,
                                            1))  # how these scales are rotated
-        rotated_samples = torch.bmm(rots, scaled_samples[..., None]).squeeze()
+
+        if self.config.isotropic:
+            # if self.config.const_scale > 0.0:
+            scaled_samples = self.scales[split_mask][:, 0][:, None].repeat(
+                samps, 1)  # how these scales are ro
+            rotated_samples = torch.bmm(rots,
+                                        scaled_samples.repeat(
+                                            1, 3)[..., None]).squeeze()
+
+            new_scales = scaled_samples
+
+        else:
+
+            scaled_samples = (
+                torch.exp(self.scales[split_mask].repeat(samps, 1)) *
+                centered_samples)  # how these scales are rotated
+            rotated_samples = torch.bmm(rots, scaled_samples[...,
+                                                             None]).squeeze()
+            new_scales = torch.log(
+                torch.exp(self.scales[split_mask]) / size_fac).repeat(
+                    samps, 1)
         new_means = rotated_samples + self.means[split_mask].repeat(samps, 1)
         # step 2, sample new colors
         new_features_dc = self.features_dc[split_mask].repeat(samps, 1)
@@ -623,8 +673,7 @@ class SplatfactoModel(Model):
         new_opacities = self.opacities[split_mask].repeat(samps, 1)
         # step 4, sample new scales
         size_fac = 1.6
-        new_scales = torch.log(torch.exp(self.scales[split_mask]) /
-                               size_fac).repeat(samps, 1)
+
         self.scales[split_mask] = torch.log(
             torch.exp(self.scales[split_mask]) / size_fac)
         # step 5, sample new quats
@@ -819,14 +868,20 @@ class SplatfactoModel(Model):
             sh_degree_to_use = min(self.step // self.config.sh_degree_interval,
                                    self.config.sh_degree)
         else:
-            colors_crop = torch.sigmoid(colors_crop).squeeze(
+            colors_crop = torch.sigmoid(features_dc_crop).squeeze(
                 1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
 
+        if self.config.isotropic:
+            if self.config.const_scale > 0.0:
+                scales_crop = scales_crop
+
+        else:
+            scales_crop = torch.exp(scales_crop)
         render, alpha, info = rasterization(
             means=means_crop,
             quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
-            scales=torch.exp(scales_crop),
+            scales=scales_crop,
             opacities=torch.sigmoid(opacities_crop).squeeze(-1),
             colors=colors_crop,
             viewmats=viewmat,  # [1, 4, 4]
